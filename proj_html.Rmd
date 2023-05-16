@@ -1,0 +1,397 @@
+---
+title: "Data Visualization"
+author: "Sneha Mitra"
+subtitle: Data Analysis of Policing Dataset Dallas,TX 2016
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+    fig_width: 10
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+# Introduction
+
+This project aims at detailed analysis of  the policing data set 37-00049_UOF-P_2016_prepped from Dallas, Texas in 2016.This will focus on the  most occurred Incidence frequency ,location,races involved in crime ,use of force on the criminals and identify if there is racial discrimination on the force application on the criminal.
+
+# Data
+
+Data include the policing data set from Dallas, Texas in 2016 from [Kaggle](https://www.kaggle.com/center-for-policing-equity/data-science-for-good)
+```{r message = F, warning = F ,echo=FALSE}
+data = read.csv('data/37-00049_UOF-P_2016_prepped.csv',na.strings=c("",NULL,"NULL"))
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(ggmap)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+library(plotly)
+library(lubridate)
+library(zoo)
+library(leaflet)
+```
+```{r missing_value,message = F, warning = F, echo=FALSE}
+#remove unnecessary columns
+data<-data[-1,]
+data = subset(data, select = -c(OFFICER_ID,SUBJECT_ID ))
+data$SUBJECT_RACE<-replace_na(data$SUBJECT_RACE,"Other")
+data$SUBJECT_RACE<-replace_na(data$SUBJECT_RACE,"Other")
+data$SUBJECT_GENDER<-replace_na(data$SUBJECT_GENDER,"Unknown")
+
+data$OFFICER_YEARS_ON_FORCE<-as.numeric(data$OFFICER_YEARS_ON_FORCE)
+data$TYPE_OF_FORCE_USED1<-replace_na(data$TYPE_OF_FORCE_USED1,"Unknown")
+data$TYPE_OF_FORCE_USED2<-replace_na(data$TYPE_OF_FORCE_USED2,"Unknown")
+data$TYPE_OF_FORCE_USED3<-replace_na(data$TYPE_OF_FORCE_USED3,"Unknown")
+
+#convert the data type from character to date
+data$INCIDENT_DATE <- format(as.Date(data$INCIDENT_DATE, format = "%m/%d/%y",rm.na=TRUE), "20%y-%m-%d",rm.na=TRUE)
+data$SUBJECT_INJURY<-as.factor(data$SUBJECT_INJURY)
+data$time  <- format(strptime(data$INCIDENT_TIME , "%I:%M:%S %p"), "%H:%M:%S")
+
+data$incident_datetime<-paste(data$INCIDENT_DATE,'',data$time)
+data$incident_datetime<-strptime(data$incident_datetime,'%Y-%m-%d %H:%M:%S') 
+
+#convert the data type from character to factor
+data$TYPE_OF_FORCE_USED1<-as.factor(data$TYPE_OF_FORCE_USED1)
+#convert the data type from character to factor
+data$TYPE_OF_FORCE_USED2<-as.factor(data$TYPE_OF_FORCE_USED2)
+
+#convert the data type from character to factor
+data$TYPE_OF_FORCE_USED3<-as.factor(data$TYPE_OF_FORCE_USED3)
+
+```
+
+# Simple Exploratory Data Analysis
+
+## Incidence distribution 
+```{r incident_distribution ,fig.height = 4 ,message = F, warning = F, echo=FALSE}
+incident_hour = data %>% 
+  mutate(hour = hour(incident_datetime)) %>% 
+  group_by(hour) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(hour, count)) +
+  geom_line(aes(color = 'Incident'), size = 1)+
+  labs(x = 'hour',y = 'Number of cases') + 
+  theme_bw() +
+  theme(legend.position = 'none')
+
+incident_hour_plot<-plotly::ggplotly(incident_hour)
+
+incident_monthly = data %>% 
+  mutate(month = as.yearmon(format(as.Date(INCIDENT_DATE), "%Y-%m"))) %>% 
+  group_by(month) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(month, count)) +
+  geom_line(aes(color = 'Incident'), size = 1)+
+  labs(x = 'month',y = 'Number of cases') + 
+  theme_bw() +
+  theme(legend.position = 'none')
+
+incident_month_plot<-plotly::ggplotly(incident_monthly)
+
+subplot(incident_hour_plot, incident_month_plot)%>%
+  layout(title = "Incidence monthly and hourly graph")
+```
+It can be observed from the graph above ,the most Incidence at night occurred after 8PM  comparatively high to the number of cases in early mornings with medium rise in cases from 12 PM to 2 PM.
+
+Also, there was a peak of Incidence observed in the month of March and September while there was a sharp decline in the Incidence from October to December.
+
+## Spatial distribution of Incidence location
+
+```{r leaflets,fig.height = 4 ,message = F, warning = F, echo=FALSE}
+data_spacial <- data[!is.na(data$LOCATION_LONGITUDE)&!is.na(data$LOCATION_LATITUDE),]
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  setView(lng = -96.758388, lat = 32.869642, zoom = 10) %>%
+  # Adding clusterOptions  = markerClusterOptions()
+  addMarkers(lng = as.numeric(data_spacial$LOCATION_LONGITUDE)
+             , lat = as.numeric(data_spacial$LOCATION_LATITUDE), 
+             popup = data_spacial$INCIDENT_REASON, clusterOptions =                markerClusterOptions())
+```
+The  interactive map above allows you to navigate the spatial crime data at street level. Each cluster reflects incidences that occurred within the polygon within that cluster. It is clear from this visualization that the proportion of crime is higher in the CENTRAL,NORTH CENTRAL,SOUTHWEST and SOUTHEAST division . Meaning, this can be a popular diverse crime hot spot and St. Lamar st,St. Forest St and Commerce St. are also the most Incident reported streets.
+
+# Incidence accross racial groups and gender
+```{r arrest_race,fig.height = 4, echo=FALSE}
+
+race_percent<-data %>%
+  group_by(SUBJECT_RACE) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round((cnt / sum(cnt))*100, 3)) %>% 
+  arrange(desc(freq))
+
+race_plot <- plot_ly(race_percent, x = ~freq, y = ~reorder(SUBJECT_RACE,freq), type = 'bar',showlegend = FALSE, text = race_percent$freq, orientation = 'h',
+        marker = list(color = '#756bb1',
+                      line = list(color = 'rgb(8,48,107)',
+                                  width = 1.5)))
+race_plot <- race_plot %>% layout(title = "Race percentage in Crimes",
+         xaxis = list(title = "Percentage"),
+         yaxis = list(title = "Race"))
+
+
+subject_gender<-data %>%
+  group_by(SUBJECT_RACE,SUBJECT_GENDER) %>%
+  summarise(cnt = n(), .groups = 'drop') %>% 
+   mutate(freq = round((cnt / sum(cnt))*100, 3)) %>% 
+  arrange(desc(cnt))
+subject_gender<-subject_gender %>% ungroup() %>%
+  pivot_wider(names_from=SUBJECT_GENDER, values_from=freq,values_fill = 0)
+
+
+gender_plot <- plot_ly(subject_gender,
+              x = ~SUBJECT_RACE,
+              y = ~Male,
+              type = "bar",
+              name = "Male") %>% 
+  add_trace(y = ~Female,
+            name = "Female") %>% 
+  add_trace(y = ~Unknown,
+            name = "Unknown") %>% 
+  layout(yaxis = list(title = "Race"),
+         barmode = "group",title = "Race  and Gender contribution in crime")
+subplot(race_plot,gender_plot)
+```
+```{r race_incident,fig.height = 4, echo=FALSE}
+
+arrest_race<-data %>% 
+  rename(Race=SUBJECT_RACE) %>%
+  filter(SUBJECT_WAS_ARRESTED=='Yes') %>%
+  mutate(month = as.yearmon(format(as.Date(INCIDENT_DATE), "%Y-%m"))) %>%
+  group_by(month, Race) %>% 
+  summarise(count = n(), .groups = 'drop') %>% 
+  group_by(month) %>% 
+  mutate(per = count/sum(count)) %>% 
+  ggplot(aes(month, per*100, color = Race)) + 
+  geom_line() +
+  geom_point() +
+  geom_text(aes(label = paste0(round(100*per), '%')), vjust = -0.3) +
+  scale_color_brewer(type = 'div', palette = 'Set1', direction = 1) +  ylim(c(0, 70)) +
+  labs(x = 'Time (month)',
+       y = 'Percentage (%)',
+       color = 'Race') +
+  theme_bw()
+
+plotly::ggplotly(arrest_race)%>% 
+  layout(title = "Arrest accross race")
+  
+```
+The  bar plots above shows the crimes in the bar plots in the Dept 37-00049.
+
+1. Blacks are involved in around 56% of the crimes, among which Male gender consists of 45%.
+2. Hispanic are involved in around 22% of the crimes, among which Male gender consists of 19%.
+3. Whites are involved in around 20% of the crime among which Male gender consists of 16%.
+
+When checking the same statistics of arrests made by the officers across different months in the year of 2016, the average share of black population is  around 56% among those arrested.
+
+# Force used on subject
+
+## ForceType
+```{r fig.height = 4 ,message = F, warning = F, echo=FALSE}
+force_type_used<-data %>%
+  group_by(TYPE_OF_FORCE_USED1) %>%
+  summarise(cnt = n(), .groups = 'drop') %>%
+arrange(desc(cnt))%>% slice(1:5) %>%
+  pivot_wider(names_from=TYPE_OF_FORCE_USED1, values_from=cnt,values_fill = 0)
+
+force_type_used1<-data %>%
+  group_by(TYPE_OF_FORCE_USED2) %>%
+  summarise(cnt = n(), .groups = 'drop') %>%
+  arrange(desc(cnt))%>%slice(1:5) %>%
+  pivot_wider(names_from=TYPE_OF_FORCE_USED2, values_from=cnt,values_fill = 0)
+
+force_type_used2<-data %>%
+  group_by(TYPE_OF_FORCE_USED3) %>%
+  summarise(cnt = n(), .groups = 'drop') %>%
+ arrange(desc(cnt))%>%slice(1:5) %>%
+  pivot_wider(names_from=TYPE_OF_FORCE_USED3, values_from=cnt,values_fill = 0)
+
+p1 <- plot_ly(x = names(force_type_used),
+              y = as.numeric(force_type_used[1,]),
+              name = "Force Type 1",
+              type = "bar")
+
+
+p2 <- plot_ly(x = names(force_type_used1),
+              y = as.numeric(force_type_used1[1,]),
+              name = "Force Type 2",
+              type = "bar")
+
+p3 <- plot_ly(x = names(force_type_used2),
+              y = as.numeric(force_type_used2[1,]),
+              name = "Force Type 3" ,
+              type = "bar")
+subplot(p1, p2,p3)%>%layout(title = "Force types")
+```
+The bar plot above shows the force types used by the officer and most used force is unknown and other is verbal command.The force type used are "Held-suspect-down","weapon display at person" and "Joint lock"
+
+## Force reason and race
+```{r fig.height = 4 ,message = F, warning = F, echo=FALSE}
+
+force_reason<-data %>%
+  group_by(REASON_FOR_FORCE) %>%
+  summarise(cnt = n(), .groups = 'drop') %>%
+arrange(desc(cnt))%>% slice(1:10) %>%
+  pivot_wider(names_from=REASON_FOR_FORCE, values_from=cnt,values_fill = 0)
+
+force_reason_plot <- plot_ly(x = names(force_reason),
+              y = as.numeric(force_reason[1,]),
+              name = "Force Reason" ,
+              type = "bar")
+
+subject_injtype<-data %>%filter(SUBJECT_INJURY=='Yes') %>%
+  group_by(SUBJECT_RACE, SUBJECT_INJURY_TYPE,SUBJECT_GENDER) %>%
+  summarise(cnt = n(), .groups = 'drop') %>% 
+  arrange(desc(cnt)) %>%
+  ungroup() %>%
+  pivot_wider(names_from=SUBJECT_INJURY_TYPE, values_from=cnt,values_fill = 0)
+
+subject_injtype$Category<-paste(subject_injtype$SUBJECT_RACE,subject_injtype$SUBJECT_GENDER)
+
+subject_injtype$Total<-apply(subject_injtype[,-c(1,2,170)],1,  sum, na.rm= TRUE)
+subject_injtype<-subject_injtype %>%filter(subject_injtype$Total>10)
+#write.csv(subject_injtype,"inj_type.csv")
+subject_injtype_plot<- plot_ly(subject_injtype,
+              x = ~(Category),
+              y = ~`Abrasion/Scrape`,
+              type = "bar",
+              name = "Abrasion/Scrape") %>% 
+  add_trace(y = ~`Laceration/Cut`,
+            name = "Laceration/Cut") %>% 
+  add_trace(y = ~`Injured prior to contact`,
+            name = "Injured prior to contact") %>% 
+  add_trace(y = ~`Puncture`,
+            name = "Puncture") %>% 
+   add_trace(y = ~`Taser Burn Marks`,
+            name = "Taser Burn Marks") %>% 
+  add_trace(y = ~`Non-Visible Injury/Pain`,
+            name = "Non-Visible Injury/Pain") %>% 
+  add_trace(y = ~`OC Spray Treatment`,
+            name = "OC Spray Treatment") %>% 
+  add_trace(y = ~`Injury Not Related to Force`,
+            name = "Injury Not Related to Force") %>% 
+  layout(yaxis = list(title = "InjuryType"),
+         barmode = "group")
+
+
+subplot(force_reason_plot,subject_injtype_plot)%>%
+  layout(title = "Force reason and injury type")
+```
+```{r fig.height = 4 ,message = F, warning = F, echo=FALSE}
+Force_race<-data %>%  
+  group_by(SUBJECT_RACE,TYPE_OF_FORCE_USED1) %>% 
+  summarise(count = n()) %>%
+  mutate(per = count/sum(count))%>%arrange(desc(count))
+force_race_plot<-Force_race %>%
+  
+  select(SUBJECT_RACE, per, TYPE_OF_FORCE_USED1)  %>% 
+  filter(!is.na(TYPE_OF_FORCE_USED1)) %>% 
+  mutate(ForceType1 = factor(TYPE_OF_FORCE_USED1,levels = c('Verbal Command','Weapon display at Person'               ,'Held Suspect Down','BD - Grabbed','Joint Locks','Take Down - Arm'))) %>% 
+    filter(!is.na(ForceType1))%>%
+  ggplot(aes(SUBJECT_RACE, per, fill = SUBJECT_RACE)) + 
+  geom_col() + 
+  geom_text(aes(label = paste0(round(100*per), '%')), vjust = -0.3) +
+  facet_wrap(vars(ForceType1)) +
+#  scale_x_discrete(limits = c('White', 'Black', 'Asian', 'Native American', 'Other')) +
+  scale_fill_brewer(type = 'div', palette = 'Set1', direction = 1) +
+  ylim(c(0, 0.8)) +
+  labs(x = 'Race',
+       y = 'Percentage (%)') +
+  theme_bw() +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplotly(force_race_plot, tooltip="text")%>%
+  layout(title = "Force used on Race")
+```
+It can be observed that the top 3 reasons for force applied on the subjects are Arrest,Active Aggression and Danger to self or others.
+
+The bar plot displays the injury of the subject accross different races and gender.It appears that most of the black population both male and female had injuries like "Abrasion/Scrape" and "Laceration/Cut" followed by the White population.
+
+# Officer behaviour
+```{r fig.height = 4 ,message = F, warning = F, echo=FALSE}
+officer_race<-data %>% filter(SUBJECT_WAS_ARRESTED=='Yes')%>% 
+  group_by(OFFICER_RACE,SUBJECT_RACE) %>% 
+  summarise(count = n()) %>%
+  mutate(per = count/sum(count))%>%
+  ungroup() 
+
+officer_race_plot<-officer_race %>%
+ 
+  select(SUBJECT_RACE, per, OFFICER_RACE)  %>% 
+  filter(!is.na(OFFICER_RACE)) %>% 
+  mutate(OfficerRace = factor(OFFICER_RACE)) %>% 
+  ggplot(aes(SUBJECT_RACE, per, fill = SUBJECT_RACE)) + 
+  geom_col() + 
+  geom_text(aes(label = paste0(round(100*per), '%')), vjust = -0.3) +
+  facet_wrap(vars(OfficerRace)) +
+#  scale_x_discrete(limits = c('White', 'Black', 'Asian', 'Native American', 'Other')) +
+  scale_fill_brewer(type = 'div', palette = 'Set1', direction = 1) +
+  ylim(c(0, 0.8)) +
+  labs(x = 'Subject Race',
+       y = 'Percentage (%)') +
+  theme_bw() +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplotly(officer_race_plot, tooltip="text")%>%
+  layout(title = "Officer race force on subject race")
+
+```
+```{r fig.height = 3 ,message = F, warning = F, echo=FALSE}
+
+officer_exp<-data %>%  
+   group_by(OFFICER_YEARS_ON_FORCE) %>% 
+  
+  summarise(cnt = n())%>% 
+   mutate(freq = round((cnt / sum(cnt))*100, 3)) %>% 
+  arrange(desc(cnt))
+
+officer_exp_plot <- plot_ly(officer_exp, x = ~freq, y = ~reorder(OFFICER_YEARS_ON_FORCE,freq), type = 'bar', text = officer_exp$freq, orientation = 'h',
+        marker = list(color = '#756bb1',
+                      line = list(color = 'rgb(8,48,107)',
+                                  width = 1.5)))
+officer_exp_plot <- officer_exp_plot %>% layout(title = "Officer Experience Vs Case Handled",
+         xaxis = list(title = "Case Handled"),
+         yaxis = list(title = "Officer Experience"))
+officer_exp_plot
+```
+The first bar chart  describes the force applied by the officer belonging to different races on subjects of different race.It can be interpreted that there seems to be no evident discrimination for the races in terms of the force application by any race of officers.
+
+The second bar chart represents the officer experience and the number of cases handles and it seems that most of the cases are handled by officers of experience 0 to 3.There are few officers with experience more than 25 years.
+
+# Findings
+
+1. Black population shares disproportional burden in police behavior in terms of force use;
+
+2. The subjects that are arrested  and injured account for 30%;
+
+4. The shares of black population in crime is over 60%;
+
+5. The officers with less experience tend to apply force more than the experienced officers;
+
+6. The crime rate notably decreased by the end of the year in 2016.
+
+# Further Scope of Analysis
+
+This can be further analysed in terms of :
+
+1. Analyzing the correlation of years of experience of officer and the force used.Does the experience have correlation with use of force?
+
+2. The Incidence frequency in different street types.
+
+3. Analyzing the subject's mental state and reason for offence committed.
+
+# References
+
+1. https://academic.oup.com/journals
+2. https://www.kaggle.com/datasets/center-for-policing-equity/data-science-for-good
+3. https://plotly.com/
