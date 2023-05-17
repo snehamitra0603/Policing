@@ -2,18 +2,7 @@
 title: "Data Visualization"
 author: "Sneha Mitra"
 subtitle: Data Analysis of Policing Dataset Dallas,TX 2016
-output:
-  html_document:
-    number_sections: yes
-    toc: yes
-    code_folding: hide
-    theme: cosmo
-    highlight: tango
-    fig_width: 10
-  word_document:
-    toc: yes
-  pdf_document:
-    toc: yes
+output: github_document
 ---
 # Introduction
 
